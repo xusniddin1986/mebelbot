@@ -1,7 +1,2 @@
-pyTelegramBotAPI
-yt-dlp
-Flask
-aiogram
-flask
-yt-dlp
-gunicorn
+aiogram==3.4.1
+aiohttp==3.9.5
