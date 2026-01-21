@@ -1,0 +1,7 @@
+pyTelegramBotAPI
+yt-dlp
+Flask
+aiogram
+flask
+yt-dlp
+gunicorn
