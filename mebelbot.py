@@ -14,17 +14,17 @@ from aiogram.types import (
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 # --- SOZLAMALAR ---
-TOKEN = "8564481489:AAG3DMZO7rdUm-J0Ux-5Dleg3PVHvmRDbXE"
+BOT_TOKEN = "8564481489:AAG3DMZO7rdUm-J0Ux-5Dleg3PVHvmRDbXE"
 SUPER_ADMIN = 5767267885
 # Render loyiha linkini shu yerga yozasiz (masalan: https://mebel-bot.onrender.com)
-WEBHOOK_HOST = "https://SINING_RENDER_LINKINGIZ.onrender.com" 
-WEBHOOK_PATH = f"/webhook/{TOKEN}"
+WEBHOOK_HOST = "https://mebelbot.onrender.com" 
+WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 # --- LOGGING ---
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=TOKEN)
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # --- BAZA BILAN ISHLASH ---
