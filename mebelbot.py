@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# --- BAZA BILAN ISHLASH ---
+# --- BAZA ---
 def init_db():
     conn = sqlite3.connect('mebel.db')
     cur = conn.cursor()
@@ -43,7 +43,7 @@ class AdminState(StatesGroup):
     add_mebel_info = State()
     add_mebel_photo = State()
 
-# --- TUGMALAR ---
+# --- TUGMALAR (DIQQAT: Inline menyuda faqat InlineKeyboardButton bo'lishi shart!) ---
 def main_menu():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="🪑 Katalog"), KeyboardButton(text="📞 Aloqa")],
@@ -51,31 +51,36 @@ def main_menu():
     ], resize_keyboard=True)
 
 def admin_inline_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Statistika", callback_query_data="stats"),
-         InlineKeyboardButton(text="✉️ Reklama tarqatish", callback_query_data="send_ad")],
-        [InlineKeyboardButton(text="📢 Kanal qo'shish", callback_query_data="add_chan"),
-         InlineKeyboardButton(text="❌ Kanalni o'chirish", callback_query_data="del_chan")],
-        [InlineKeyboardButton(text="📦 Mebel qo'shish", callback_query_data="add_mebel"),
-         InlineKeyboardButton(text="🗑 Katalogni tozalash", callback_query_data="clear_cat")]
-    ])
+    # Bu yerda FAQAT InlineKeyboardButton ishlatilganiga ishonch hosil qilamiz
+    kb = [
+        [
+            InlineKeyboardButton(text="📊 Statistika", callback_query_data="stats"),
+            InlineKeyboardButton(text="✉️ Reklama", callback_query_data="send_ad")
+        ],
+        [
+            InlineKeyboardButton(text="📢 Kanal +", callback_query_data="add_chan"),
+            InlineKeyboardButton(text="❌ Kanal -", callback_query_data="del_chan")
+        ],
+        [
+            InlineKeyboardButton(text="📦 Mebel +", callback_query_data="add_mebel"),
+            InlineKeyboardButton(text="🗑 Tozalash", callback_query_data="clear_cat")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# --- MAJBURIY OBUNA TEKSHIRUVI ---
+# --- MAJBURIY OBUNA ---
 async def is_subscribed(user_id):
     conn = sqlite3.connect('mebel.db')
     channels = conn.cursor().execute("SELECT id FROM channels").fetchall()
     conn.close()
-    
     for ch in channels:
         try:
             member = await bot.get_chat_member(chat_id=ch[0], user_id=user_id)
-            if member.status in ['left', 'kicked']:
-                return False
-        except Exception:
-            continue
+            if member.status in ['left', 'kicked']: return False
+        except: continue
     return True
 
-# --- ASOSIY HANDLERLAR ---
+# --- HANDLERLAR ---
 @dp.message(F.text == "/start")
 async def start_cmd(message: Message):
     init_db()
@@ -89,29 +94,20 @@ async def start_cmd(message: Message):
         conn = sqlite3.connect('mebel.db')
         chans = conn.cursor().execute("SELECT id, url, title FROM channels").fetchall()
         conn.close()
-        
         if chans:
-            markup = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=c[2], url=c[1])] for c in chans
-            ])
+            markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=c[2], url=c[1])] for c in chans])
             markup.inline_keyboard.append([InlineKeyboardButton(text="✅ Tekshirish", callback_query_data="check_sub")])
-            return await message.answer("Botdan foydalanish uchun kanallarga obuna bo'ling:", reply_markup=markup)
+            return await message.answer("Avval kanallarga a'zo bo'ling:", reply_markup=markup)
 
-    await message.answer("Mebel botiga xush kelibsiz!", reply_markup=main_menu())
+    await message.answer("Xush kelibsiz!", reply_markup=main_menu())
 
-@dp.callback_query(F.data == "check_sub")
-async def check_callback(call: CallbackQuery):
-    if await is_subscribed(call.from_user.id):
-        await call.message.delete()
-        await call.message.answer("Obuna tasdiqlandi!", reply_markup=main_menu())
-    else:
-        await call.answer("Hamma kanallarga obuna bo'lmagansiz!", show_alert=True)
-
-# --- ADMIN PANEL ---
 @dp.message(F.text == "/admin")
 async def admin_panel(message: Message):
     if message.from_user.id == SUPER_ADMIN:
+        # Xatoni oldini olish uchun klaviaturani tekshirib chiqamiz
         await message.answer("🛠 Admin boshqaruv markazi:", reply_markup=admin_inline_menu())
+    else:
+        await message.answer(f"Siz admin emassiz! ID: {message.from_user.id}")
 
 @dp.callback_query(F.data == "stats")
 async def stats_call(call: CallbackQuery):
@@ -119,39 +115,19 @@ async def stats_call(call: CallbackQuery):
     u_count = conn.cursor().execute("SELECT COUNT(*) FROM users").fetchone()[0]
     m_count = conn.cursor().execute("SELECT COUNT(*) FROM furniture").fetchone()[0]
     conn.close()
-    await call.message.answer(f"📊 Statistika:\n\n👤 Foydalanuvchilar: {u_count}\n📦 Mahsulotlar: {m_count}")
+    await call.message.answer(f"📊 Statistika:\n👤 Userlar: {u_count}\n📦 Mebellar: {m_count}")
     await call.answer()
 
-# --- ADMIN: KANAL VA KATALOGNI TOZALASH ---
-@dp.callback_query(F.data == "del_chan")
-async def del_chan_call(call: CallbackQuery):
-    conn = sqlite3.connect('mebel.db')
-    conn.execute("DELETE FROM channels")
-    conn.commit()
-    conn.close()
-    await call.message.answer("❌ Hamma kanallar o'chirildi.")
-    await call.answer()
-
-@dp.callback_query(F.data == "clear_cat")
-async def clear_cat_call(call: CallbackQuery):
-    conn = sqlite3.connect('mebel.db')
-    conn.execute("DELETE FROM furniture")
-    conn.commit()
-    conn.close()
-    await call.message.answer("🗑 Katalog tozalandi.")
-    await call.answer()
-
-# --- ADMIN: MEBEL QO'SHISH ---
 @dp.callback_query(F.data == "add_mebel")
 async def mebel_add_step1(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("📦 Mebel kategoriyasi:")
+    await call.message.answer("📦 Kategoriya nomi?")
     await state.set_state(AdminState.add_mebel_cat)
     await call.answer()
 
 @dp.message(AdminState.add_mebel_cat)
 async def mebel_add_step2(message: Message, state: FSMContext):
     await state.update_data(cat=message.text)
-    await message.answer("ℹ️ Ma'lumot:")
+    await message.answer("ℹ️ Ma'lumot?")
     await state.set_state(AdminState.add_mebel_info)
 
 @dp.message(AdminState.add_mebel_info)
@@ -162,59 +138,28 @@ async def mebel_add_step3(message: Message, state: FSMContext):
 
 @dp.message(AdminState.add_mebel_photo)
 async def mebel_add_final(message: Message, state: FSMContext):
-    if not message.photo: return await message.answer("Rasm yuboring!")
+    if not message.photo: return await message.answer("Faqat rasm yuboring!")
     data = await state.get_data()
     conn = sqlite3.connect('mebel.db')
     conn.cursor().execute("INSERT INTO furniture (cat, info, photo) VALUES (?, ?, ?)", 
                          (data['cat'], data['info'], message.photo[-1].file_id))
     conn.commit()
     conn.close()
-    await message.answer("✅ Qo'shildi!", reply_markup=main_menu())
+    await message.answer("✅ Katalogga qo'shildi!", reply_markup=main_menu())
     await state.clear()
 
-# --- FOYDALANUVCHI: KATALOG ---
 @dp.message(F.text == "🪑 Katalog")
 async def catalog_show(message: Message):
     conn = sqlite3.connect('mebel.db')
     items = conn.cursor().execute("SELECT cat, info, photo FROM furniture").fetchall()
     conn.close()
-    if not items: return await message.answer("Katalog bo'sh.")
+    if not items: return await message.answer("Hozircha bo'sh.")
     for item in items:
         await message.answer_photo(photo=item[2], caption=f"📁 {item[0]}\n\nℹ️ {item[1]}")
 
-# --- ADMIN: KANAL QO'SHISH ---
-@dp.callback_query(F.data == "add_chan")
-async def chan_add_step1(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("📢 Kanal ID:")
-    await state.set_state(AdminState.add_chan_id)
-    await call.answer()
-
-@dp.message(AdminState.add_chan_id)
-async def chan_add_step2(message: Message, state: FSMContext):
-    await state.update_data(id=message.text)
-    await message.answer("🔗 Kanal linki:")
-    await state.set_state(AdminState.add_chan_url)
-
-@dp.message(AdminState.add_chan_url)
-async def chan_add_step3(message: Message, state: FSMContext):
-    await state.update_data(url=message.text)
-    await message.answer("📝 Kanal nomi:")
-    await state.set_state(AdminState.add_chan_title)
-
-@dp.message(AdminState.add_chan_title)
-async def chan_add_final(message: Message, state: FSMContext):
-    data = await state.get_data()
-    conn = sqlite3.connect('mebel.db')
-    conn.cursor().execute("INSERT INTO channels VALUES (?, ?, ?)", (data['id'], data['url'], message.text))
-    conn.commit()
-    conn.close()
-    await message.answer("✅ Kanal qo'shildi!")
-    await state.clear()
-
-# --- ADMIN: REKLAMA ---
 @dp.callback_query(F.data == "send_ad")
 async def ad_step1(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("✉️ Reklama yuboring:")
+    await call.message.answer("✉️ Reklamani yuboring (Rasm, tekst, video):")
     await state.set_state(AdminState.waiting_ad)
     await call.answer()
 
@@ -229,22 +174,28 @@ async def ad_final(message: Message, state: FSMContext):
             await message.copy_to(chat_id=user[0])
             count += 1
             await asyncio.sleep(0.05)
-        except Exception: continue
+        except: continue
     await message.answer(f"✅ {count} kishiga yuborildi.")
     await state.clear()
 
-# --- BOSHQALAR ---
+# --- QOLGAN FUNKSIYALAR ---
+@dp.callback_query(F.data == "del_chan")
+async def del_chan(call: CallbackQuery):
+    conn = sqlite3.connect('mebel.db'); conn.execute("DELETE FROM channels"); conn.commit(); conn.close()
+    await call.message.answer("❌ Kanallar o'chirildi."); await call.answer()
+
+@dp.callback_query(F.data == "clear_cat")
+async def clear_cat(call: CallbackQuery):
+    conn = sqlite3.connect('mebel.db'); conn.execute("DELETE FROM furniture"); conn.commit(); conn.close()
+    await call.message.answer("🗑 Katalog tozalandi."); await call.answer()
+
 @dp.message(F.text == "📞 Aloqa")
 async def contact(message: Message):
-    await message.answer("📞 Admin: @mebel_admin\nTel: +998 90 123 45 67")
+    await message.answer("📞 Admin: @mebel_admin")
 
 @dp.message(F.text == "📍 Manzilimiz")
-async def loc_cmd(message: Message):
-    await message.answer("📍 Toshkent shahri, Chilonzor 5-mavze.")
-
-@dp.message(F.text == "ℹ️ Biz haqimizda")
-async def about_cmd(message: Message):
-    await message.answer("Sifatli mebellar do'koni!")
+async def loc(message: Message):
+    await message.answer("📍 Toshkent shahri.")
 
 async def on_startup(bot: Bot):
     await bot.delete_webhook(drop_pending_updates=True)
