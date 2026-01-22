@@ -18,8 +18,9 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 
 # --- CONFIG ---
 BOT_TOKEN = os.getenv("8564481489:AAG3DMZO7rdUm-J0Ux-5Dleg3PVHvmRDbXE")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "5767267885"))
-WEBHOOK_URL = os.getenv("https://mebelbot.onrender.com") 
+ADMIN_ID = os.getenv("ADMIN_ID", "5767267885")
+# To'g'ri varianti (O'zgaruvchi nomini yozing):
+WEBHOOK_URL = os.getenv("https://mebelbot.onrender.com")
 WEBHOOK_PATH = "/webhook"
 PORT = int(os.getenv("PORT", 8080))
 
