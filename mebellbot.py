@@ -17,7 +17,7 @@ from aiohttp import web
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 # --- CONFIG ---
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("8564481489:AAG3DMZO7rdUm-J0Ux-5Dleg3PVHvmRDbXE")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "5767267885"))
 WEBHOOK_URL = os.getenv("https://mebelbot.onrender.com") 
 WEBHOOK_PATH = "/webhook"
