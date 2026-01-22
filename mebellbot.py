@@ -18,7 +18,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 
 # --- CONFIG ---
 # Renderda Environment Variable orqali olinadi yoki shu yerga yozing
-TOKEN = os.getenv("8564481489:AAG3DMZO7rdUm-J0Ux-5Dleg3PVHvmRDbXE")
+BOT_TOKEN = os.getenv("8564481489:AAG3DMZO7rdUm-J0Ux-5Dleg3PVHvmRDbXE")
 ADMIN_ID = int(os.getenv("5767267885"))  # Raqam bo'lishi shart
 
 # Web server port (Render uchun)
@@ -66,7 +66,7 @@ class AdminState(StatesGroup):
     broadcast = State()
 
 # --- BOT SETUP ---
-bot = Bot(token=TOKEN)
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 dp.include_router(router)
