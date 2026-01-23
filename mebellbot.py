@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, Router, F, types
-from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -20,10 +20,10 @@ from aiohttp import web
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 # ==========================================================
-# 1. ASOSIY KONFIGURATSIYA (TOKEN VA LINKLAR)
+# 1. KONFIGURATSIYA
 # ==========================================================
 BOT_TOKEN = "8564481489:AAG3DMZO7rdUm-J0Ux-5Dleg3PVHvmRDbXE"
-ADMIN_ID = 5767267885
+ADMIN_ID = 8553997595  # Asosiy admin
 WEBHOOK_URL = "https://mebelbot.onrender.com"
 WEBHOOK_PATH = "/webhook"
 PORT = int(os.getenv("PORT", 8080))
@@ -34,39 +34,29 @@ PORT = int(os.getenv("PORT", 8080))
 def db_start():
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
-    # Foydalanuvchilar jadvali
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        joined_date TEXT
-    )""")
-    # Kanallar jadvali
+    cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, joined_date TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, link TEXT, channel_id TEXT)")
-    # Kategoriyalar jadvali
     cursor.execute("CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)")
-    # Mahsulotlar jadvali
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        category_id INTEGER,
-        photo_id TEXT,
-        name TEXT,
-        size TEXT,
-        quantity TEXT,
-        price TEXT,
-        description TEXT
-    )""")
+    cursor.execute("CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER, photo_id TEXT, name TEXT, size TEXT, quantity TEXT, price TEXT, description TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)")
+    # Asosiy adminni bazaga kiritish
+    cursor.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (ADMIN_ID,))
     conn.commit()
     conn.close()
 
+def get_admins():
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM admins")
+    admins = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return admins
+
 # ==========================================================
-# 3. STATE (HOLATLAR) BOSHQARUVI
+# 3. STATE (HOLATLAR)
 # ==========================================================
 class AdminState(StatesGroup):
-    # Kategoriya qo'shish
     add_category_name = State()
-    # Mahsulot qo'shish bosqichlari
     prod_category_select = State()
     prod_photo = State()
     prod_name = State()
@@ -74,33 +64,29 @@ class AdminState(StatesGroup):
     prod_quantity = State()
     prod_price = State()
     prod_description = State()
-    # Majburiy obuna
     add_channel_id = State()
     add_channel_link = State()
-    # Xabar yuborish
     broadcast_msg = State()
+    add_new_admin = State()
 
 # ==========================================================
 # 4. KLAVIATURALAR
 # ==========================================================
 def get_main_menu():
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🗂 Bo'limlar"), KeyboardButton(text="📞 Bog'lanish")]
-        ],
-        resize_keyboard=True
-    )
-    return keyboard
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🗂 Bo'limlar"), KeyboardButton(text="📞 Bog'lanish")],
+        [KeyboardButton(text="ℹ️ Bot haqida"), KeyboardButton(text="🆘 Yordam")]
+    ], resize_keyboard=True)
 
-def get_admin_menu():
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="📊 Statistika", callback_data="admin_stat"))
-    builder.row(InlineKeyboardButton(text="✉️ Xabar Yuborish", callback_data="admin_send_all"))
-    builder.row(InlineKeyboardButton(text="📂 Bo'lim Qo'shish", callback_data="admin_add_cat"))
-    builder.row(InlineKeyboardButton(text="🛋 Mahsulot Qo'shish", callback_data="admin_add_product"))
-    builder.row(InlineKeyboardButton(text="📢 Kanal Qo'shish", callback_data="admin_add_chan"))
-    builder.row(InlineKeyboardButton(text="🗑 Kanallarni Tozalash", callback_data="admin_clear_chan"))
-    return builder.as_markup()
+def get_admin_keyboard():
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="✉️ Xabar yuborish")],
+        [KeyboardButton(text="📂 Bo'lim qo'shish"), KeyboardButton(text="🗑 Bo'limni o'chirish")],
+        [KeyboardButton(text="🛋 Mahsulot qo'shish"), KeyboardButton(text="❌ Mahsulotni o'chirish")],
+        [KeyboardButton(text="📢 Kanal qo'shish"), KeyboardButton(text="🚫 Kanalni o'chirish")],
+        [KeyboardButton(text="👤 Admin qo'shish"), KeyboardButton(text="➖ Adminni o'chirish")],
+        [KeyboardButton(text="🏠 Asosiy Menyu")]
+    ], resize_keyboard=True)
 
 # ==========================================================
 # 5. BOTNI SOZLASH
@@ -110,7 +96,7 @@ dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 
 # ==========================================================
-# 6. OBUNANI TEKSHIRISH FUNKSIYASI
+# 6. OBUNANI TEKSHIRISH
 # ==========================================================
 async def is_user_subscribed(user_id: int):
     conn = sqlite3.connect('mebel.db')
@@ -118,329 +104,415 @@ async def is_user_subscribed(user_id: int):
     cursor.execute("SELECT channel_id, link FROM channels")
     channels = cursor.fetchall()
     conn.close()
-    
-    not_subscribed_links = []
+    not_subbed = []
     for ch_id, link in channels:
         try:
             member = await bot.get_chat_member(chat_id=ch_id, user_id=user_id)
-            if member.status in ['left', 'kicked', 'restricted']:
-                not_subscribed_links.append(link)
-        except Exception:
-            # Agar bot kanalda admin bo'lmasa yoki kanal topilmasa
-            continue
-    return not_subscribed_links
+            if member.status in ['left', 'kicked']:
+                not_subbed.append(link)
+        except: continue
+    return not_subbed
 
 # ==========================================================
-# 7. FOYDALANUVCHI HANDLERLARI (USER INTERFACE)
+# 7. FOYDALANUVCHI HANDLERLARI
 # ==========================================================
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    user_id = message.from_user.id
-    username = message.from_user.username or "NoUsername"
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Foydalanuvchini bazaga saqlash
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined_date) VALUES (?, ?, ?)", (user_id, username, now))
+    cursor.execute("INSERT OR IGNORE INTO users VALUES (?, ?, ?)", 
+                   (message.from_user.id, message.from_user.username, datetime.now().strftime("%Y-%m-%d")))
     conn.commit()
     conn.close()
 
-    # Obunani tekshirish
-    not_subbed = await is_user_subscribed(user_id)
+    not_subbed = await is_user_subscribed(message.from_user.id)
     if not_subbed:
         builder = InlineKeyboardBuilder()
         for link in not_subbed:
             builder.row(InlineKeyboardButton(text="Obuna bo'lish", url=link))
-        builder.row(InlineKeyboardButton(text="✅ Obunani tekshirish", callback_data="check_subscription"))
-        await message.answer("Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:", reply_markup=builder.as_markup())
+        builder.row(InlineKeyboardButton(text="✅ Tekshirish", callback_data="check_sub"))
+        await message.answer("Botdan foydalanish uchun kanallarga obuna bo'ling:", reply_markup=builder.as_markup())
     else:
-        await message.answer(f"Assalomu alaykum {message.from_user.full_name}!\nMebel katalogi botiga xush kelibsiz.", reply_markup=get_main_menu())
+        await message.answer("Katalogga xush kelibsiz!", reply_markup=get_main_menu())
 
-@router.callback_query(F.data == "check_subscription")
+@router.callback_query(F.data == "check_sub")
 async def check_sub_cb(call: CallbackQuery):
     not_subbed = await is_user_subscribed(call.from_user.id)
     if not_subbed:
-        await call.answer("Siz hali barcha kanallarga obuna bo'lmagansiz!", show_alert=True)
+        await call.answer("Barcha kanallarga obuna bo'ling!", show_alert=True)
     else:
         await call.message.delete()
-        await call.message.answer("Obuna tasdiqlandi. Marhamat, bo'limlarni tanlang:", reply_markup=get_main_menu())
+        await call.message.answer("Xush kelibsiz!", reply_markup=get_main_menu())
+
+@router.message(F.text == "ℹ️ Bot haqida")
+async def about_bot(message: Message):
+    await message.answer("Assalomu alaykum! @mebelsotuvchibot ga xush kelibsiz.\n\n")
+
+@router.message(F.text == "🆘 Yordam")
+async def help_cmd(message: Message):
+    await message.answer("Muammo yuzaga kelsa @xamidovcore adminiga murojaat qiling.")
 
 @router.message(F.text == "📞 Bog'lanish")
-async def contact_us(message: Message):
-    text = "📍 Bizning manzil: Toshkent shahri\n📞 Aloqa: +998901234567\n👤 Admin: @admin_username"
-    await message.answer(text)
+async def contact(message: Message):
+    await message.answer("📍 Andijon shahar\n📞 +998901234567\n👤 @xamidovcore")
 
 @router.message(F.text == "🗂 Bo'limlar")
-async def show_categories(message: Message):
+async def show_cats(message: Message):
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM categories")
     cats = cursor.fetchall()
     conn.close()
-
     if not cats:
         await message.answer("Hozircha bo'limlar mavjud emas.")
         return
-
     builder = InlineKeyboardBuilder()
-    for cat_id, name in cats:
-        builder.row(InlineKeyboardButton(text=name, callback_data=f"cat_{cat_id}"))
-    
-    await message.answer("Kerakli bo'limni tanlang:", reply_markup=builder.as_markup())
+    for cid, name in cats:
+        builder.row(InlineKeyboardButton(text=name, callback_data=f"usercat_{cid}"))
+    await message.answer("Bo'limni tanlang:", reply_markup=builder.as_markup())
 
-# --- MAHSULOTLARNI KO'RISH VA NAVIGATSIYA ---
-@router.callback_query(F.data.startswith("cat_"))
-async def open_category(call: CallbackQuery):
+@router.callback_query(F.data.startswith("usercat_"))
+async def open_cat(call: CallbackQuery):
     cat_id = int(call.data.split("_")[1])
-    await send_product_page(call.message, cat_id, 0)
+    await show_products_to_user(call.message, cat_id, 0)
     await call.message.delete()
 
-async def send_product_page(message: Message, cat_id: int, index: int):
+async def show_products_to_user(message, cat_id, index):
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
     cursor.execute("SELECT photo_id, name, size, quantity, price, description FROM products WHERE category_id = ?", (cat_id,))
-    all_products = cursor.fetchall()
+    prods = cursor.fetchall()
     conn.close()
-
-    if not all_products:
-        await message.answer("Ushbu bo'limda mahsulotlar topilmadi.")
+    if not prods:
+        await message.answer("Bu bo'limda mahsulotlar yo'q.", reply_markup=get_main_menu())
         return
-
-    if index >= len(all_products): index = 0
-    if index < 0: index = len(all_products) - 1
-
-    p = all_products[index]
-    caption = (
-        f"🏷 <b>Nomi:</b> {p[1]}\n"
-        f"📏 <b>O'lchami:</b> {p[2]}\n"
-        f"🔢 <b>Soni:</b> {p[3]}\n"
-        f"💰 <b>Narxi:</b> {p[4]}\n\n"
-        f"📝 <b>Tavsif:</b> {p[5]}\n\n"
-        f"👨‍💻 Buyurtma uchun: @admin_username"
-    )
-
+    if index >= len(prods): index = 0
+    if index < 0: index = len(prods)-1
+    p = prods[index]
+    caption = f"🏷 <b>{p[1]}</b>\n📏 O'lcham: {p[2]}\n🔢 Soni: {p[3]}\n💰 Narx: {p[4]}\n\n📝 {p[5]}\n\n👨‍💻 @xamidovcore"
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="⬅️", callback_data=f"page_{cat_id}_{index-1}"),
-        InlineKeyboardButton(text="❌", callback_data="close_view"),
-        InlineKeyboardButton(text="➡️", callback_data=f"page_{cat_id}_{index+1}")
-    )
-    builder.row(InlineKeyboardButton(text="🔙 Bo'limlarga qaytish", callback_data="back_to_categories"))
+    builder.row(InlineKeyboardButton(text="⬅️", callback_data=f"unav_{cat_id}_{index-1}"),
+                InlineKeyboardButton(text="➡️", callback_data=f"unav_{cat_id}_{index+1}"))
+    builder.row(InlineKeyboardButton(text="🔙 Bo'limlarga qaytish", callback_data="back_user_cats"))
+    await message.answer_photo(photo=p[0], caption=caption, parse_mode="HTML", reply_markup=builder.as_markup())
 
-    await message.answer_photo(
-        photo=p[0],
-        caption=caption,
-        parse_mode="HTML",
-        reply_markup=builder.as_markup()
-    )
-
-@router.callback_query(F.data.startswith("page_"))
-async def paginate_products(call: CallbackQuery):
-    _, cat_id, index = call.data.split("_")
+@router.callback_query(F.data.startswith("unav_"))
+async def user_nav(call: CallbackQuery):
+    _, cid, idx = call.data.split("_")
     await call.message.delete()
-    await send_product_page(call.message, int(cat_id), int(index))
+    await show_products_to_user(call.message, int(cid), int(idx))
 
-@router.callback_query(F.data == "close_view")
-async def delete_msg(call: CallbackQuery):
+@router.callback_query(F.data == "back_user_cats")
+async def back_u_cats(call: CallbackQuery):
+    await call.message.delete()
+    await show_cats(call.message)
+
+# ==========================================================
+# 8. ADMIN HANDLERLARI (TO'LIQ)
+# ==========================================================
+@router.message(Command("admin"))
+async def admin_entry(message: Message):
+    if message.from_user.id in get_admins():
+        await message.answer("👨‍💻 Admin Panelga xush kelibsiz!", reply_markup=get_admin_keyboard())
+
+@router.message(F.text == "🏠 Asosiy Menyu")
+async def back_home(message: Message):
+    await message.answer("Bosh menyu:", reply_markup=get_main_menu())
+
+@router.message(F.text == "📊 Statistika")
+async def admin_stat(message: Message):
+    if message.from_user.id not in get_admins(): return
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    u = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    c = cursor.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
+    p = cursor.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+    conn.close()
+    await message.answer(f"📊 <b>Bot Statistikasi:</b>\n\n👥 Foydalanuvchilar: {u}\n📂 Bo'limlar: {c}\n🛋 Mahsulotlar: {p}", parse_mode="HTML")
+
+# --- KANAL BOSHQARUVI ---
+@router.message(F.text == "📢 Kanal qo'shish")
+async def add_chan_start(message: Message, state: FSMContext):
+    if message.from_user.id not in get_admins(): return
+    await message.answer("Kanal ID raqamini yuboring (-100...):")
+    await state.set_state(AdminState.add_channel_id)
+
+@router.message(AdminState.add_channel_id)
+async def add_chan_id(message: Message, state: FSMContext):
+    await state.update_data(chid=message.text)
+    await message.answer("Kanal linkini yuboring (https://t.me/...):")
+    await state.set_state(AdminState.add_channel_link)
+
+@router.message(AdminState.add_channel_link)
+async def add_chan_link(message: Message, state: FSMContext):
+    d = await state.get_data()
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO channels (link, channel_id) VALUES (?, ?)", (message.text, d['chid']))
+    conn.commit()
+    conn.close()
+    await message.answer("✅ Kanal qo'shildi.", reply_markup=get_admin_keyboard())
+    await state.clear()
+
+@router.message(F.text == "🚫 Kanalni o'chirish")
+async def del_chan_list(message: Message):
+    if message.from_user.id not in get_admins(): return
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, link FROM channels")
+    chans = cursor.fetchall()
+    conn.close()
+    if not chans:
+        await message.answer("Kanallar yo'q.")
+        return
+    builder = InlineKeyboardBuilder()
+    for cid, link in chans:
+        builder.row(InlineKeyboardButton(text=f"❌ {link}", callback_data=f"delchan_{cid}"))
+    await message.answer("O'chirish uchun kanalni tanlang:", reply_markup=builder.as_markup())
+
+@router.callback_query(F.data.startswith("delchan_"))
+async def del_chan_exec(call: CallbackQuery):
+    cid = call.data.split("_")[1]
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM channels WHERE id = ?", (cid,))
+    conn.commit()
+    conn.close()
+    await call.answer("Kanal o'chirildi.")
     await call.message.delete()
 
-@router.callback_query(F.data == "back_to_categories")
-async def back_to_cats(call: CallbackQuery):
+# --- ADMIN BOSHQARUVI ---
+@router.message(F.text == "👤 Admin qo'shish")
+async def add_adm_start(message: Message, state: FSMContext):
+    if message.from_user.id not in get_admins(): return
+    await message.answer("Yangi admin Telegram ID sini yuboring:")
+    await state.set_state(AdminState.add_new_admin)
+
+@router.message(AdminState.add_new_admin)
+async def add_adm_final(message: Message, state: FSMContext):
+    try:
+        aid = int(message.text)
+        conn = sqlite3.connect('mebel.db')
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO admins VALUES (?)", (aid,))
+        conn.commit()
+        conn.close()
+        await message.answer(f"✅ ID:{aid} admin qilindi.")
+    except: await message.answer("Xato! Faqat raqam yuboring.")
+    await state.clear()
+
+@router.message(F.text == "➖ Adminni o'chirish")
+async def del_adm_list(message: Message):
+    if message.from_user.id not in get_admins(): return
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM admins")
+    adms = cursor.fetchall()
+    conn.close()
+    builder = InlineKeyboardBuilder()
+    for (aid,) in adms:
+        if aid != ADMIN_ID:
+            builder.row(InlineKeyboardButton(text=f"👤 ID:{aid}", callback_data=f"deladm_{aid}"))
+    await message.answer("O'chiriladigan adminni tanlang:", reply_markup=builder.as_markup())
+
+@router.callback_query(F.data.startswith("deladm_"))
+async def del_adm_exec(call: CallbackQuery):
+    aid = call.data.split("_")[1]
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM admins WHERE user_id = ?", (aid,))
+    conn.commit()
+    conn.close()
+    await call.answer("Admin o'chirildi.")
     await call.message.delete()
-    # categories_handler funksiyasi o'rniga to'g'ridan to'g'ri chaqiramiz
+
+# --- BO'LIM VA MAHSULOT O'CHIRISH ---
+@router.message(F.text == "🗑 Bo'limni o'chirish")
+async def del_cat_list(message: Message):
+    if message.from_user.id not in get_admins(): return
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM categories")
     cats = cursor.fetchall()
     conn.close()
     builder = InlineKeyboardBuilder()
-    for cat_id, name in cats:
-        builder.row(InlineKeyboardButton(text=name, callback_data=f"cat_{cat_id}"))
-    await call.message.answer("Kerakli bo'limni tanlang:", reply_markup=builder.as_markup())
+    for cid, name in cats:
+        builder.row(InlineKeyboardButton(text=f"🗑 {name}", callback_data=f"delcat_{cid}"))
+    await message.answer("Bo'limni tanlang (Unga tegishli hamma mahsulotlar ham o'chadi!):", reply_markup=builder.as_markup())
 
-# ==========================================================
-# 8. ADMIN HANDLERLARI (BOSHQRUV)
-# ==========================================================
-@router.message(Command("admin"))
-async def admin_panel(message: Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("👨‍💻 Admin panelga xush kelibsiz!", reply_markup=get_admin_menu())
-
-@router.callback_query(F.data == "admin_stat")
-async def admin_stat(call: CallbackQuery):
+@router.callback_query(F.data.startswith("delcat_"))
+async def del_cat_exec(call: CallbackQuery):
+    cid = call.data.split("_")[1]
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(user_id) FROM users")
-    user_count = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(id) FROM products")
-    prod_count = cursor.fetchone()[0]
+    cursor.execute("DELETE FROM products WHERE category_id = ?", (cid,))
+    cursor.execute("DELETE FROM categories WHERE id = ?", (cid,))
+    conn.commit()
     conn.close()
-    await call.message.answer(f"📊 Statistika:\n\n👥 Foydalanuvchilar: {user_count}\n🛋 Mahsulotlar: {prod_count}")
+    await call.answer("Bo'lim o'chirildi.")
+    await call.message.delete()
 
-# --- KATEGORIYA QO'SHISH ---
-@router.callback_query(F.data == "admin_add_cat")
-async def admin_add_cat(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("Yangi bo'lim (kategoriya) nomini yuboring:")
+@router.message(F.text == "❌ Mahsulotni o'chirish")
+async def del_prod_step1(message: Message):
+    if message.from_user.id not in get_admins(): return
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name FROM categories")
+    cats = cursor.fetchall()
+    conn.close()
+    builder = InlineKeyboardBuilder()
+    for cid, name in cats:
+        builder.row(InlineKeyboardButton(text=name, callback_data=f"pdelcat_{cid}"))
+    await message.answer("Qaysi bo'limdagi mahsulotni o'chirmoqchisiz?", reply_markup=builder.as_markup())
+
+@router.callback_query(F.data.startswith("pdelcat_"))
+async def del_prod_step2(call: CallbackQuery):
+    cid = call.data.split("_")[1]
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name FROM products WHERE category_id = ?", (cid,))
+    prods = cursor.fetchall()
+    conn.close()
+    if not prods:
+        await call.answer("Bu bo'limda mahsulot yo'q.")
+        return
+    builder = InlineKeyboardBuilder()
+    for pid, name in prods:
+        builder.row(InlineKeyboardButton(text=name, callback_data=f"pdelexec_{pid}"))
+    await call.message.answer("O'chiriladigan mahsulotni tanlang:", reply_markup=builder.as_markup())
+
+@router.callback_query(F.data.startswith("pdelexec_"))
+async def del_prod_exec(call: CallbackQuery):
+    pid = call.data.split("_")[1]
+    conn = sqlite3.connect('mebel.db')
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM products WHERE id = ?", (pid,))
+    conn.commit()
+    conn.close()
+    await call.answer("Mahsulot o'chirildi.")
+    await call.message.delete()
+
+# --- BO'LIM QO'SHISH ---
+@router.message(F.text == "📂 Bo'lim qo'shish")
+async def add_cat_start(message: Message, state: FSMContext):
+    if message.from_user.id not in get_admins(): return
+    await message.answer("Yangi bo'lim nomini yuboring:")
     await state.set_state(AdminState.add_category_name)
 
 @router.message(AdminState.add_category_name)
-async def process_add_cat(message: Message, state: FSMContext):
-    cat_name = message.text
+async def add_cat_final(message: Message, state: FSMContext):
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO categories (name) VALUES (?)", (cat_name,))
+    cursor.execute("INSERT INTO categories (name) VALUES (?)", (message.text,))
     conn.commit()
     conn.close()
-    await message.answer(f"✅ {cat_name} bo'limi muvaffaqiyatli qo'shildi!", reply_markup=get_admin_menu())
+    await message.answer("✅ Bo'lim saqlandi.", reply_markup=get_admin_keyboard())
     await state.clear()
 
-# --- MAHSULOT QO'SHISH BOSQICHLARI ---
-@router.callback_query(F.data == "admin_add_product")
-async def admin_add_prod_step1(call: CallbackQuery, state: FSMContext):
+# --- MAHSULOT QO'SHISH ---
+@router.message(F.text == "🛋 Mahsulot qo'shish")
+async def add_p_step1(message: Message, state: FSMContext):
+    if message.from_user.id not in get_admins(): return
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM categories")
     cats = cursor.fetchall()
     conn.close()
     if not cats:
-        await call.answer("Avval bo'lim qo'shishingiz kerak!", show_alert=True)
+        await message.answer("Avval bo'lim qo'shing!")
         return
     builder = InlineKeyboardBuilder()
     for cid, name in cats:
-        builder.row(InlineKeyboardButton(text=name, callback_data=f"selcat_{cid}"))
-    await call.message.answer("Mahsulot qaysi bo'limga qo'shilsin?", reply_markup=builder.as_markup())
+        builder.row(InlineKeyboardButton(text=name, callback_data=f"selc_{cid}"))
+    await message.answer("Bo'limni tanlang:", reply_markup=builder.as_markup())
     await state.set_state(AdminState.prod_category_select)
 
-@router.callback_query(AdminState.prod_category_select, F.data.startswith("selcat_"))
-async def admin_add_prod_step2(call: CallbackQuery, state: FSMContext):
-    cat_id = call.data.split("_")[1]
-    await state.update_data(cat_id=cat_id)
-    await call.message.answer("Mahsulot rasmini yuboring:")
+@router.callback_query(AdminState.prod_category_select)
+async def add_p_step2(call: CallbackQuery, state: FSMContext):
+    cid = call.data.split("_")[1]
+    await state.update_data(cid=cid)
+    await call.message.answer("Rasm yuboring:")
     await state.set_state(AdminState.prod_photo)
 
 @router.message(AdminState.prod_photo, F.photo)
-async def admin_add_prod_step3(message: Message, state: FSMContext):
-    photo_id = message.photo[-1].file_id
-    await state.update_data(photo_id=photo_id)
-    await message.answer("Mahsulot nomini kiriting:")
+async def add_p_step3(message: Message, state: FSMContext):
+    await state.update_data(photo=message.photo[-1].file_id)
+    await message.answer("Nomini yozing:")
     await state.set_state(AdminState.prod_name)
 
 @router.message(AdminState.prod_name)
-async def admin_add_prod_step4(message: Message, state: FSMContext):
+async def add_p_step4(message: Message, state: FSMContext):
     await state.update_data(name=message.text)
-    await message.answer("Mahsulot o'lchamini kiriting (masalan: 200x150):")
+    await message.answer("O'lchami:")
     await state.set_state(AdminState.prod_size)
 
 @router.message(AdminState.prod_size)
-async def admin_add_prod_step5(message: Message, state: FSMContext):
+async def add_p_step5(message: Message, state: FSMContext):
     await state.update_data(size=message.text)
-    await message.answer("Mahsulot sonini kiriting (masalan: 5 ta):")
+    await message.answer("Soni:")
     await state.set_state(AdminState.prod_quantity)
 
 @router.message(AdminState.prod_quantity)
-async def admin_add_prod_step6(message: Message, state: FSMContext):
-    await state.update_data(quantity=message.text)
-    await message.answer("Mahsulot narxini kiriting (masalan: 1,500,000 so'm):")
+async def add_p_step6(message: Message, state: FSMContext):
+    await state.update_data(qty=message.text)
+    await message.answer("Narxi:")
     await state.set_state(AdminState.prod_price)
 
 @router.message(AdminState.prod_price)
-async def admin_add_prod_step7(message: Message, state: FSMContext):
+async def add_p_step7(message: Message, state: FSMContext):
     await state.update_data(price=message.text)
-    await message.answer("Mahsulot uchun batafsil tavsif (description) yuboring:")
+    await message.answer("Tavsif (description):")
     await state.set_state(AdminState.prod_description)
 
 @router.message(AdminState.prod_description)
-async def admin_add_prod_final(message: Message, state: FSMContext):
-    data = await state.get_data()
+async def add_p_final(message: Message, state: FSMContext):
+    d = await state.get_data()
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
-    cursor.execute("""
-    INSERT INTO products (category_id, photo_id, name, size, quantity, price, description)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (data['cat_id'], data['photo_id'], data['name'], data['size'], data['quantity'], data['price'], message.text))
+    cursor.execute("INSERT INTO products (category_id, photo_id, name, size, quantity, price, description) VALUES (?,?,?,?,?,?,?)",
+                   (d['cid'], d['photo'], d['name'], d['size'], d['qty'], d['price'], message.text))
     conn.commit()
     conn.close()
-    await message.answer("✅ Mahsulot muvaffaqiyatli saqlandi!", reply_markup=get_admin_menu())
+    await message.answer("✅ Mahsulot qo'shildi!", reply_markup=get_admin_keyboard())
     await state.clear()
 
-# --- REKLAMA TARQATISH ---
-@router.callback_query(F.data == "admin_send_all")
-async def admin_send_all(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("Hamma foydalanuvchilarga yuboriladigan xabarni (rasm, matn, video) yuboring:")
+# --- REKLAMA ---
+@router.message(F.text == "✉️ Xabar yuborish")
+async def broad_s(message: Message, state: FSMContext):
+    if message.from_user.id not in get_admins(): return
+    await message.answer("Reklama xabarini (matn, rasm, video) yuboring:")
     await state.set_state(AdminState.broadcast_msg)
 
 @router.message(AdminState.broadcast_msg)
-async def process_broadcast(message: Message, state: FSMContext):
+async def broad_f(message: Message, state: FSMContext):
     conn = sqlite3.connect('mebel.db')
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users")
     users = cursor.fetchall()
     conn.close()
-    
     count = 0
-    for user in users:
+    for u in users:
         try:
-            await message.copy_to(chat_id=user[0])
+            await message.copy_to(u[0])
             count += 1
             await asyncio.sleep(0.05)
-        except Exception:
-            continue
-    await message.answer(f"✅ Xabar {count} ta foydalanuvchiga yetkazildi.", reply_markup=get_admin_menu())
+        except: continue
+    await message.answer(f"✅ {count} ta foydalanuvchiga yuborildi.", reply_markup=get_admin_keyboard())
     await state.clear()
-
-# --- MAJBURIY OBUNA (KANAL QO'SHISH) ---
-@router.callback_query(F.data == "admin_add_chan")
-async def admin_add_chan(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("Kanal ID raqamini yuboring (masalan: -100123456789):")
-    await state.set_state(AdminState.add_channel_id)
-
-@router.message(AdminState.add_channel_id)
-async def process_chan_id(message: Message, state: FSMContext):
-    await state.update_data(ch_id=message.text)
-    await message.answer("Kanal linkini yuboring (masalan: https://t.me/kanal_linki):")
-    await state.set_state(AdminState.add_channel_link)
-
-@router.message(AdminState.add_channel_link)
-async def process_chan_link(message: Message, state: FSMContext):
-    data = await state.get_data()
-    conn = sqlite3.connect('mebel.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO channels (link, channel_id) VALUES (?, ?)", (message.text, data['ch_id']))
-    conn.commit()
-    conn.close()
-    await message.answer("✅ Kanal majburiy obuna ro'yxatiga qo'shildi!", reply_markup=get_admin_menu())
-    await state.clear()
-
-@router.callback_query(F.data == "admin_clear_chan")
-async def clear_channels(call: CallbackQuery):
-    conn = sqlite3.connect('mebel.db')
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM channels")
-    conn.commit()
-    conn.close()
-    await call.answer("Barcha kanallar o'chirildi!", show_alert=True)
 
 # ==========================================================
-# 9. SERVER VA WEBHOOK ISHGA TUSHIRISH
+# 9. SERVER VA WEBHOOK
 # ==========================================================
 async def on_startup(bot: Bot):
     db_start()
-    # Webhookni o'rnatish
     await bot.set_webhook(f"{WEBHOOK_URL}{WEBHOOK_PATH}", drop_pending_updates=True)
-    logging.info(f"Webhook set to: {WEBHOOK_URL}{WEBHOOK_PATH}")
 
 def main():
     dp.include_router(router)
     dp.startup.register(on_startup)
-    
     app = web.Application()
-    app.router.add_get("/", lambda r: web.Response(text="Bot is running live!"))
-    
-    # Webhook so'rovlarini qabul qilish
-    handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
-    handler.register(app, path=WEBHOOK_PATH)
-    
+    app.router.add_get("/", lambda r: web.Response(text="Bot is Live!"))
+    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
     web.run_app(app, host="0.0.0.0", port=PORT)
 
