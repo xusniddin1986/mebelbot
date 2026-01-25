@@ -189,7 +189,7 @@ async def show_products_to_user(message, cat_id, index):
     if index >= len(prods): index = 0
     if index < 0: index = len(prods)-1
     p = prods[index]
-    caption = f"🏷 <b>{p[1]}</b>\n📏 O'lcham: {p[2]}\n🔢 Soni: {p[3]}\n💰 Narx: {p[4]}\n\n📝 {p[5]}\n\n👨‍💻 @xamidovcore"
+    caption = f"🏷 <b>{p[1]}</b>\n📏 O'lcham: {p[2]}\n🔢 Soni: {p[3]}\n💰 Narx: {p[4]}\n\n📝 {p[5]}\n\n👨‍💻 @saidaliyev_f"
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⬅️", callback_data=f"unav_{cat_id}_{index-1}"),
                 InlineKeyboardButton(text="➡️", callback_data=f"unav_{cat_id}_{index+1}"))
