@@ -150,11 +150,11 @@ async def about_bot(message: Message):
 
 @router.message(F.text == "🆘 Yordam")
 async def help_cmd(message: Message):
-    await message.answer("Muammo yuzaga kelsa @xamidovcore adminiga murojaat qiling.")
+    await message.answer("Muammo yuzaga kelsa @saidaliyev_f adminiga murojaat qiling.")
 
 @router.message(F.text == "📞 Bog'lanish")
 async def contact(message: Message):
-    await message.answer("📍 Andijon shahar\n📞 +998901234567\n👤 @xamidovcore")
+    await message.answer("📍 Andijon shahar\n📞 +998995381222\n👤 @saidaliyev_f")
 
 @router.message(F.text == "🗂 Bo'limlar")
 async def show_cats(message: Message):
